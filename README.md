@@ -50,10 +50,10 @@ The pipeline lives in `pipeline/` and caches SportAPI data into Supabase.
 
 ```bash
 cd pipeline
-cp .env.example .env            # then add your SportAPI + Supabase keys
+cp .env.example .env            # add your SportAPI + Supabase keys
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-python pipeline.py all          # or: lineups | players
+python pipeline.py all          
 ```
 
 ## Project structure
