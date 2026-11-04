@@ -37,7 +37,7 @@ key, which row-level security makes safe to ship publicly.
 - **Pipeline:** a local Python script (`pipeline/pipeline.py`) using requests + supabase-py
 - **Data source:** [SportAPI](https://sportapi.ai)
 
-## Install the extension (load unpacked)
+## Install the extension 
 
 1. Download or clone this repo.
 2. Open `chrome://extensions` and turn on Developer mode in the top-right.
