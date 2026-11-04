@@ -25,23 +25,23 @@ SportAPI  ──►  Python pipeline (pipeline.py)  ──►  Supabase (Postgre
              players, upserts to cache               publishable key only       publishable key
 ```
 
-**Why this matters:** routing every read through the Supabase cache **bounds API usage**
+Routing every read through the Supabase cache bounds API usage
 (one batch pull serves all users, instead of a live API call per panel open) and
-**keeps the secret API key server-side** — the extension only ever holds a publishable
+keeps the secret API key server-side. The extension only ever holds a publishable
 key, which row-level security makes safe to ship publicly.
 
 ## Tech stack
 
-- **Extension:** Chrome Manifest V3, Side Panel API, vanilla HTML/CSS/JS (no framework, no build step)
+- **Extension:** Chrome Manifest V3, Side Panel API, vanilla HTML/CSS/JS 
 - **Backend:** Supabase (Postgres, REST, Row-Level Security)
 - **Pipeline:** a local Python script (`pipeline/pipeline.py`) using requests + supabase-py
 - **Data source:** [SportAPI](https://sportapi.ai)
 
 ## Install the extension (load unpacked)
 
-1. Download or clone this repo, keeping the folder somewhere permanent.
-2. Open `chrome://extensions` and turn on **Developer mode** (top-right).
-3. Click **Load unpacked** and select the project folder.
+1. Download or clone this repo.
+2. Open `chrome://extensions` and turn on Developer mode in the top-right.
+3. Click Load unpacked and select the project folder.
 4. Pin SideKick, then click it to open the side panel.
 
 ## Run the data pipeline
@@ -64,12 +64,12 @@ python pipeline.py all
 | `background.js`             | Service worker — opens the side panel on click              |
 | `panel.html`                | UI markup + all styling (glass theme, aurora)               |
 | `panel.js`                  | App logic — fetches data, renders fixtures/formations/cards |
-| `pipeline/pipeline.py`      | Data pipeline — pulls SportAPI → Supabase (lineups, players)|
+| `pipeline/pipeline.py`      | Data pipeline — pulls SportAPI into Supabase                |
 | `pipeline/requirements.txt` | Python dependencies                                         |
 | `pipeline/.env.example`     | Template for the pipeline's secret keys                     |
 
 ## Roadmap
 
-- Automate the pipeline (scheduled job instead of a manual run)
+- Automate the pipeline (scheduled instead of a manual run)
 - Key data on stable IDs rather than team names
 - Additional leagues beyond the Premier League
