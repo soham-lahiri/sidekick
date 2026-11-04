@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "SideKick",
+  "version": "0.1",
+  "description": "Your match-day sidekick — lineups, stats, and context next to your stream",
+  "permissions": ["sidePanel"],
+  "host_permissions": ["https://ykcagxlgmbfspnkgvrnh.supabase.co/*"],
+  "side_panel": { "default_path": "panel.html" },
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "Open SideKick" }
+}

@@ -1,0 +1,18 @@
+# macOS
+.DS_Store
+.Rhistory
+
+# Distributable
+SideKick.zip
+
+# Python virtual environment
+venv/
+pipeline/venv/
+
+# Python caches
+__pycache__/
+*.pyc
+
+# Secrets — never commit real keys
+.env
+pipeline/.env
