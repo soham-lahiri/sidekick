@@ -1,28 +1,35 @@
 """
 SideKick data pipeline
 ----------------------
-Pulls Premier League lineups and player/squad stats from SportAPI and caches
-them in Supabase, so the Chrome extension only ever reads from Supabase (never
-from SportAPI directly). Ported from the original Colab notebook to run locally.
+Pulls Premier League fixtures, lineups, and player stats from SportAPI and
+caches them in Supabase, so the Chrome extension only ever reads from Supabase.
 
-Usage:
-    python pipeline.py lineups    # refresh lineups for every fixture in the DB
-    python pipeline.py players    # fetch league teams' squads + season stats
-    python pipeline.py all        # both (default if no argument given)
+Designed to run on a schedule (see .github/workflows/) and use the API
+efficiently — each data type is refreshed only as often as it actually changes:
+  - fixtures + scores : daily, for a window of dates around today
+  - lineups           : daily, only for fixtures near matchday
+  - player season stats : weekly (heavy — one API call per player)
+
+Commands:
+    python pipeline.py fixtures   # upsert fixtures + scores for a date window
+    python pipeline.py lineups    # pull lineups for fixtures near matchday
+    python pipeline.py players    # refresh squads + season stats (weekly)
+    python pipeline.py daily      # fixtures + lineups  (default)
+    python pipeline.py all        # everything
 
 Setup:
-    1. cp .env.example .env   and fill in your real keys
-    2. source venv/bin/activate   (or your VS Code interpreter)
-    3. pip install -r requirements.txt
-    4. python pipeline.py all
+    cp .env.example .env   and fill in your keys, then:
+    python -m venv venv && source venv/bin/activate
+    pip install -r requirements.txt
+    python pipeline.py daily
 
-.env must define:  SPORTAPI_KEY, SUPABASE_URL, SUPABASE_SECRET_KEY
+.env (or CI secrets) must define: SPORTAPI_KEY, SUPABASE_URL, SUPABASE_SECRET_KEY
 """
 
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import requests
 from dotenv import load_dotenv
@@ -30,37 +37,77 @@ from supabase import create_client
 
 load_dotenv()
 
-# --- config / secrets (loaded from .env, never hardcoded) ---
 try:
     SPORTAPI_KEY = os.environ["SPORTAPI_KEY"]
     SUPABASE_URL = os.environ["SUPABASE_URL"]
     SUPABASE_SECRET_KEY = os.environ["SUPABASE_SECRET_KEY"]
 except KeyError as missing:
-    sys.exit(f"Missing environment variable {missing}. "
-             f"Copy .env.example to .env and fill in your keys.")
+    sys.exit(f"Missing environment variable {missing}. Copy .env.example to .env "
+             f"and fill in your keys (or set it as a CI secret).")
 
 BASE = "https://sportapi.ai/api"
 HEADERS = {"X-Api-Key": SPORTAPI_KEY}
 LEAGUE_ID = 24  # Premier League
 
-# The pipeline writes, so it uses the SECRET key (kept server-side, out of the
-# extension). The extension itself reads with the publishable key.
+# Pipeline writes, so it uses the SECRET key (kept server-side / in CI secrets).
+# The extension reads with the publishable key.
 sb = create_client(SUPABASE_URL, SUPABASE_SECRET_KEY)
 
 
-def pull_lineups():
-    """For every fixture already in the DB, pull its lineup (if posted) and cache it.
-    Idempotent: clears a fixture's existing lineup rows before inserting fresh ones."""
-    fixtures = sb.table("fixtures").select("id").execute().data
-    print(f"fixtures to check: {len(fixtures)}")
+def _today():
+    return datetime.now(timezone.utc).date()
+
+
+# ---------------- fixtures + scores ----------------
+def pull_fixtures(days_back=2, days_ahead=14):
+    """Upsert Premier League fixtures (and their scores/status) for a window of
+    dates around today — refreshing recent results and picking up new upcoming
+    games. SportAPI lists fixtures by date only, so we query one date at a time."""
+    rows = []
+    for offset in range(-days_back, days_ahead + 1):
+        day = (_today() + timedelta(days=offset)).isoformat()
+        try:
+            resp = requests.get(f"{BASE}/fixtures/date/{day}", headers=HEADERS, timeout=10).json()
+        except Exception as e:
+            print(f"{day} error: {e}")
+            continue
+        items = resp.get("data", []) if isinstance(resp, dict) else (resp or [])
+        for m in items:
+            if m.get("league_id") != LEAGUE_ID:
+                continue
+            rows.append({
+                "id": m["id"],
+                "league_id": LEAGUE_ID,
+                "league_name": "Premier League",
+                "home_team": m.get("home_team"),
+                "away_team": m.get("away_team"),
+                "kickoff_utc": m.get("kickoff_utc"),
+                "status": m.get("status"),
+                "home_score": m.get("home_score"),
+                "away_score": m.get("away_score"),
+                "match_date": day,
+            })
+        time.sleep(0.2)
+    if rows:
+        sb.table("fixtures").upsert(rows, on_conflict="id").execute()
+    print(f"DONE fixtures — upserted: {len(rows)}")
+
+
+# ---------------- lineups ----------------
+def pull_lineups(days_back=2, days_ahead=2):
+    """Pull lineups only for fixtures near matchday (default: yesterday .. +2 days)
+    instead of every fixture in the DB. Idempotent: clears a fixture's rows first."""
+    start = (_today() - timedelta(days=days_back)).isoformat()
+    end = (_today() + timedelta(days=days_ahead)).isoformat()
+    fixtures = (sb.table("fixtures").select("id")
+                .gte("match_date", start).lte("match_date", end).execute().data)
+    print(f"lineups: checking {len(fixtures)} fixtures in [{start} .. {end}]")
 
     total = 0
     for fx in fixtures:
         fid = fx["id"]
         try:
-            lu = requests.get(
-                f"{BASE}/fixtures/{fid}/lineups", headers=HEADERS, timeout=10
-            ).json()
+            lu = requests.get(f"{BASE}/fixtures/{fid}/lineups", headers=HEADERS, timeout=10).json()
             if not lu.get("available"):
                 continue
             rows = []
@@ -69,14 +116,10 @@ def pull_lineups():
                 for grp, starter in (("starters", True), ("subs", False)):
                     for p in team.get(grp, []):
                         rows.append({
-                            "fixture_id": fid,
-                            "team_side": side,
-                            "player_name": p["name"],
-                            "position": p["position"],
-                            "shirt": p.get("shirt"),
-                            "is_captain": p.get("is_captain"),
-                            "is_starter": starter,
-                            "mins_played": p.get("mins_played"),
+                            "fixture_id": fid, "team_side": side,
+                            "player_name": p["name"], "position": p["position"],
+                            "shirt": p.get("shirt"), "is_captain": p.get("is_captain"),
+                            "is_starter": starter, "mins_played": p.get("mins_played"),
                         })
             if rows:
                 sb.table("lineups").delete().eq("fixture_id", fid).execute()
@@ -86,13 +129,13 @@ def pull_lineups():
         except Exception as e:
             print(f"{fid} error: {e}")
         time.sleep(0.5)
+    print(f"DONE lineups — rows stored: {total}")
 
-    print(f"DONE — total lineup rows stored: {total}")
 
-
+# ---------------- players + season stats ----------------
 def clean_dob(dob):
-    """Return dob only if it's a valid YYYY-MM-DD date, else None (SportAPI
-    occasionally returns malformed dates like '2006-00-00')."""
+    """Return dob only if it's a valid YYYY-MM-DD date, else None
+    (SportAPI occasionally returns malformed dates like '2006-00-00')."""
     if not dob:
         return None
     try:
@@ -103,34 +146,26 @@ def clean_dob(dob):
 
 
 def pull_players():
-    """Fetch each league team's squad + season stats and cache in the players table.
-    Skips teams already stored. Idempotent upsert on (team_name, shirt)."""
+    """Refresh every league team's squad + season stats (heavy — one API call per
+    player). Stats accumulate on matchdays, so run this weekly, not daily.
+    Idempotent upsert on (team_name, shirt)."""
     teams = [
         {"id": r["team"]["id"], "name": r["team"]["name"]}
-        for r in requests.get(
-            f"{BASE}/standings/{LEAGUE_ID}", headers=HEADERS, timeout=10
-        ).json().get("data", [])
+        for r in requests.get(f"{BASE}/standings/{LEAGUE_ID}", headers=HEADERS, timeout=10)
+                 .json().get("data", [])
     ]
-
-    done = {r["team_name"] for r in sb.table("players").select("team_name").execute().data}
-    print(f"already stored: {len(done)} teams")
+    print(f"players: refreshing {len(teams)} teams")
 
     total = 0
     for t in teams:
         tid, tname = t["id"], t["name"]
-        if tname in done:
-            print(f"{tname} skip")
-            continue
         try:
-            squad = requests.get(
-                f"{BASE}/teams/{tid}/squad", headers=HEADERS, timeout=10
-            ).json().get("squad", [])
+            squad = requests.get(f"{BASE}/teams/{tid}/squad", headers=HEADERS, timeout=10).json().get("squad", [])
         except Exception as e:
             print(f"{tname} squad error: {e}")
             continue
 
-        # Dedupe by shirt number — one row per jersey (some feeds list two).
-        by_shirt = {}
+        by_shirt = {}  # dedupe to one row per jersey number
         for p in squad:
             shirt = p.get("jersey_number")
             if shirt is None or shirt in by_shirt:
@@ -160,17 +195,31 @@ def pull_players():
             total += len(rows)
             print(f"{tname} -> {len(rows)}")
 
-    print(f"DONE — newly stored players: {total}")
+    print(f"DONE players — rows upserted: {total}")
 
 
+# ---------------- entrypoint ----------------
 def main():
-    cmd = sys.argv[1] if len(sys.argv) > 1 else "all"
-    if cmd not in ("lineups", "players", "all"):
-        sys.exit(f"unknown command: {cmd}\nusage: python pipeline.py [lineups|players|all]")
-    if cmd in ("lineups", "all"):
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "daily"
+    if cmd == "fixtures":
+        pull_fixtures()
+    elif cmd == "lineups":
         pull_lineups()
-    if cmd in ("players", "all"):
+    elif cmd == "players":
         pull_players()
+    elif cmd == "daily":
+        pull_fixtures()
+        pull_lineups()
+    elif cmd == "all":
+        pull_fixtures()
+        pull_lineups()
+        pull_players()
+    elif cmd == "backfill":
+        # one-time catch-up: refresh scores/status for the whole season so far
+        pull_fixtures(days_back=150, days_ahead=14)
+    else:
+        sys.exit(f"unknown command: {cmd}\n"
+                 f"usage: python pipeline.py [fixtures|lineups|players|daily|all|backfill]")
 
 
 if __name__ == "__main__":
