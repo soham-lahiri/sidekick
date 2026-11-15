@@ -1,8 +1,6 @@
 # SideKick ⚽
 
-**Your soccer sidekick** — a Chrome side-panel extension that shows Premier League
-fixtures, formations, and player stats right next to your stream, so new fans can
-follow along without tabbing away to look things up.
+**Your soccer sidekick** — a Chrome side-panel extension that shows fixtures, formations, and player stats from six different leagues (Premier League, La Liga, Bundesliga, Serie A, Ligue 1, UEFA Champions League, and MLS) right next to your stream, so new fans can follow along without tabbing away to look things up.
 
 ## What it does
 
