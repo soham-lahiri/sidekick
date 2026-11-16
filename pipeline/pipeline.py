@@ -47,7 +47,23 @@ except KeyError as missing:
 
 BASE = "https://sportapi.ai/api"
 HEADERS = {"X-Api-Key": SPORTAPI_KEY}
-LEAGUE_ID = 24  # Premier League
+
+# SportAPI league id -> display name. The fixtures-by-date endpoint returns EVERY
+# league in one call, so adding leagues here costs no extra fixtures API calls —
+# we just stop filtering them out.
+LEAGUES = {
+    24: "Premier League",
+    1:  "La Liga",
+    2:  "Bundesliga",
+    3:  "Serie A",
+    9:  "Ligue 1",
+    18: "Champions League",
+    89: "MLS",
+}
+
+# Player season stats are one API call per player (~520/league), so that refresh
+# stays PL-only for now; multi-league player pulls get staggered across the week.
+PLAYERS_LEAGUE_ID = 24
 
 # Pipeline writes, so it uses the SECRET key (kept server-side / in CI secrets).
 # The extension reads with the publishable key.
@@ -60,9 +76,10 @@ def _today():
 
 # ---------------- fixtures + scores ----------------
 def pull_fixtures(days_back=2, days_ahead=14):
-    """Upsert Premier League fixtures (and their scores/status) for a window of
-    dates around today — refreshing recent results and picking up new upcoming
-    games. SportAPI lists fixtures by date only, so we query one date at a time."""
+    """Upsert fixtures (and their scores/status) for every league in LEAGUES, for
+    a window of dates around today — refreshing recent results and picking up new
+    upcoming games. SportAPI lists fixtures by date only (one call returns all
+    leagues), so we query one date at a time and keep the leagues we track."""
     rows = []
     for offset in range(-days_back, days_ahead + 1):
         day = (_today() + timedelta(days=offset)).isoformat()
@@ -73,12 +90,13 @@ def pull_fixtures(days_back=2, days_ahead=14):
             continue
         items = resp.get("data", []) if isinstance(resp, dict) else (resp or [])
         for m in items:
-            if m.get("league_id") != LEAGUE_ID:
+            lid = m.get("league_id")
+            if lid not in LEAGUES:
                 continue
             rows.append({
                 "id": m["id"],
-                "league_id": LEAGUE_ID,
-                "league_name": "Premier League",
+                "league_id": lid,
+                "league_name": LEAGUES[lid],
                 "home_team": m.get("home_team"),
                 "away_team": m.get("away_team"),
                 "kickoff_utc": m.get("kickoff_utc"),
@@ -151,7 +169,7 @@ def pull_players():
     Idempotent upsert on (team_name, shirt)."""
     teams = [
         {"id": r["team"]["id"], "name": r["team"]["name"]}
-        for r in requests.get(f"{BASE}/standings/{LEAGUE_ID}", headers=HEADERS, timeout=10)
+        for r in requests.get(f"{BASE}/standings/{PLAYERS_LEAGUE_ID}", headers=HEADERS, timeout=10)
                  .json().get("data", [])
     ]
     print(f"players: refreshing {len(teams)} teams")
@@ -198,6 +216,39 @@ def pull_players():
     print(f"DONE players — rows upserted: {total}")
 
 
+# ---------------- discover league IDs ----------------
+def list_leagues():
+    """Print the target leagues and their SportAPI IDs (one-off helper to
+    configure multi-league support). Run: python pipeline.py leagues"""
+    import re
+    data = requests.get(f"{BASE}/standings/leagues", headers=HEADERS, timeout=15).json()
+    seen, rows = set(), []
+
+    def walk(x):
+        if isinstance(x, dict):
+            if "id" in x and ("name" in x or "slug" in x) and x["id"] not in seen:
+                seen.add(x["id"])
+                rows.append(x)
+            for v in x.values():
+                walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+
+    walk(data)
+    want = re.compile(
+        r"premier league|la ?liga|bundesliga|serie a|ligue 1|"
+        r"champions league|\bmls\b|major league soccer",
+        re.I,
+    )
+    print("=== target leagues ===")
+    for lg in rows:
+        hay = f"{lg.get('name', '')} {lg.get('slug', '')}"
+        if want.search(hay):
+            print(f"  id={lg.get('id')}\tslug={lg.get('slug', '')}\t{lg.get('name')}")
+    print(f"\n(total leagues available: {len(rows)})")
+
+
 # ---------------- entrypoint ----------------
 def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "daily"
@@ -217,9 +268,11 @@ def main():
     elif cmd == "backfill":
         # one-time catch-up: refresh scores/status for the whole season so far
         pull_fixtures(days_back=150, days_ahead=14)
+    elif cmd == "leagues":
+        list_leagues()
     else:
         sys.exit(f"unknown command: {cmd}\n"
-                 f"usage: python pipeline.py [fixtures|lineups|players|daily|all|backfill]")
+                 f"usage: python pipeline.py [fixtures|lineups|players|daily|all|backfill|leagues]")
 
 
 if __name__ == "__main__":

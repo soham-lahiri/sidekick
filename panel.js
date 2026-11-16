@@ -193,17 +193,234 @@ function attachCard3D(card) {
   });
 }
 
+// ===== leagues (apiId = SportAPI league id used to filter the fixtures table) =====
+const LEAGUES = [
+  { id: "PL",  name: "Premier League",   logo: "icons/pl.jpg",  apiId: 24 },
+  { id: "LL",  name: "La Liga",          logo: "icons/ll.png",  apiId: 1 },
+  { id: "BL",  name: "Bundesliga",       logo: "icons/bl.svg",  apiId: 2 },
+  { id: "SA",  name: "Serie A",          logo: "icons/sa.jpg",  apiId: 3 },
+  { id: "L1",  name: "Ligue 1",          logo: "icons/l1.png",  apiId: 9 },
+  { id: "CL",  name: "Champions League", logo: "icons/cl.jpg",  apiId: 18 },
+  { id: "MLS", name: "MLS",              logo: "icons/mls.png", apiId: 89, bg: "#000000" },
+];
+function leagueById(id) { return LEAGUES.find(l => l.id === id) || LEAGUES[0]; }
+let currentLeagueId = "PL";
+
+// ===== Premier League team display meta: [abbreviation, short name, accent color] =====
+const PL_TEAMS = {
+  "Arsenal": ["ARS","Arsenal","#EF0107"],
+  "Manchester City": ["MCI","Man City","#6CABDD"],
+  "Liverpool": ["LIV","Liverpool","#C8102E"],
+  "Chelsea": ["CHE","Chelsea","#034694"],
+  "Aston Villa": ["AVL","Aston Villa","#670E36"],
+  "Manchester United": ["MUN","Man United","#DA291C"],
+  "Tottenham Hotspur": ["TOT","Tottenham","#132257"],
+  "Newcastle United": ["NEW","Newcastle","#241F20"],
+  "Brighton & Hove Albion": ["BHA","Brighton","#0057B8"],
+  "Brentford": ["BRE","Brentford","#E30613"],
+  "Everton": ["EVE","Everton","#003399"],
+  "Crystal Palace": ["CRY","Crystal Palace","#1B458F"],
+  "Fulham": ["FUL","Fulham","#1a1a1a"],
+  "AFC Bournemouth": ["BOU","Bournemouth","#DA291C"],
+  "Nottingham Forest": ["NFO","Nott'm Forest","#DD0000"],
+  "Coventry City": ["COV","Coventry","#60B5E5"],
+  "Sunderland": ["SUN","Sunderland","#EB172B"],
+  "Leeds United": ["LEE","Leeds","#1D428A"],
+  "Hull City": ["HUL","Hull City","#F18A01"],
+  "Ipswich Town": ["IPS","Ipswich","#3A64A3"],
+};
+function teamMeta(name) {
+  if (PL_TEAMS[name]) return { abbr: PL_TEAMS[name][0], short: PL_TEAMS[name][1], color: PL_TEAMS[name][2] };
+  const clean = (name || "").replace(/^(AFC|FC)\s+/i, "").trim();
+  return { abbr: clean.slice(0, 3).toUpperCase() || "—", short: name || "—", color: "#64748b" };
+}
+
+// ---- match status ----
+function isFinished(f) {
+  if (/^(ft|aet|pen|full)/i.test(f.status || "")) return true;
+  return f.home_score != null && f.away_score != null && !/live|1h|2h|half|^ht|^et/i.test(f.status || "");
+}
+function isLive(f) {
+  return /live|1h|2h|half|^ht|^et/i.test(f.status || "") && !isFinished(f);
+}
+
+// ---- standings computed from finished fixtures ----
+function computeStandings(fixtures) {
+  const t = {};
+  const ensure = n => (t[n] = t[n] || { team: n, p:0, w:0, d:0, l:0, gf:0, ga:0, pts:0, form:[] });
+  const finished = fixtures
+    .filter(isFinished)
+    .sort((a, b) => (a.match_date || "").localeCompare(b.match_date || ""));
+  for (const f of finished) {
+    if (f.home_score == null || f.away_score == null) continue;
+    const h = ensure(f.home_team), a = ensure(f.away_team);
+    const hs = f.home_score, as = f.away_score;
+    h.p++; a.p++; h.gf += hs; h.ga += as; a.gf += as; a.ga += hs;
+    if (hs > as) { h.w++; a.l++; h.pts += 3; h.form.push("W"); a.form.push("L"); }
+    else if (hs < as) { a.w++; h.l++; a.pts += 3; h.form.push("L"); a.form.push("W"); }
+    else { h.d++; a.d++; h.pts++; a.pts++; h.form.push("D"); a.form.push("D"); }
+  }
+  return Object.values(t)
+    .map(x => ({ ...x, gd: x.gf - x.ga, form: x.form.slice(-5) }))
+    .sort((x, y) => y.pts - x.pts || y.gd - x.gd || y.gf - x.gf || x.team.localeCompare(y.team));
+}
+
 // ---- screens ----
 async function showHome() {
   content.innerHTML = `
     <div class="panel">
-      <div class="apptitle">SideKick</div>
-      <div class="appsub">Premier League · tap a match for lineups</div>
-      <div id="fixtures">Loading…</div>
+      <div class="leaguebar">
+        ${LEAGUES.map(l => `
+          <div class="lchip ${l.id === currentLeagueId ? "active" : "soon"}" data-id="${l.id}" data-name="${l.name}" title="${l.name}">
+            <div class="lchip-badge"${l.bg ? ` style="background:${l.bg}"` : ""}><img src="${l.logo}" alt="${l.name}"></div>
+          </div>`).join("")}
+      </div>
+      <div id="home-body"><div class="empty">Loading…</div></div>
     </div>`;
+
+  content.querySelectorAll(".lchip").forEach(chipEl => {
+    chipEl.addEventListener("click", () => {
+      currentLeagueId = chipEl.dataset.id;
+      setActiveChip(currentLeagueId);
+      renderLeagueHome(leagueById(currentLeagueId));
+    });
+  });
+
+  setActiveChip(currentLeagueId);
+  renderLeagueHome(leagueById(currentLeagueId));
+}
+
+function setActiveChip(id) {
+  content.querySelectorAll(".lchip").forEach(c => {
+    const on = c.dataset.id === id;
+    c.classList.toggle("active", on);
+    c.classList.toggle("soon", !on);
+  });
+}
+
+function renderComingSoon(name) {
+  const body = document.getElementById("home-body");
+  if (body) body.innerHTML = `
+    <div class="empty">
+      <div class="soon-emoji">🔜</div>
+      <b>${name}</b> is coming soon.<br>
+      The data pipeline for this league isn't built yet.
+    </div>`;
+}
+
+async function renderLeagueHome(league) {
+  const body = document.getElementById("home-body");
+  if (!body) return;
+  body.innerHTML = `<div class="empty">Loading…</div>`;
+  try {
+    const fixtures = await api(`fixtures?league_id=eq.${league.apiId}&order=match_date,kickoff_utc&select=*`);
+    if (!fixtures.length) { renderComingSoon(league.name); return; }
+    const standings = computeStandings(fixtures);
+    const topSet = new Set(standings.slice(0, 4).map(s => s.team));
+
+    const today = todayISO();
+    const upcoming = fixtures
+      .filter(f => (f.match_date || "") >= today)
+      .sort((a, b) => (a.match_date || "").localeCompare(b.match_date || "") || (a.kickoff_utc || "").localeCompare(b.kickoff_utc || ""))
+      .slice(0, 7);
+
+    body.innerHTML = `
+      <div class="sec-head"><span>Upcoming</span><a class="sec-link" id="see-all">See all →</a></div>
+      <div id="upcoming">${renderUpcoming(upcoming, topSet)}</div>
+      <div class="sec-head" style="margin-top:16px"><span>Standings</span><a class="sec-link" id="full-table">Full table →</a></div>
+      <div id="standings">${renderStandings(standings.slice(0, 5))}</div>
+      <div class="footer">${league.name}</div>`;
+
+    const seeAll = document.getElementById("see-all");
+    if (seeAll) seeAll.addEventListener("click", () => showFixtures(league));
+    const fullTable = document.getElementById("full-table");
+    if (fullTable) fullTable.addEventListener("click", () => showStandings(standings, league));
+    body.querySelectorAll(".upc-row").forEach(el =>
+      el.addEventListener("click", () =>
+        showLineup(el.dataset.id, decodeURIComponent(el.dataset.home), decodeURIComponent(el.dataset.away))));
+  } catch (err) {
+    body.innerHTML = `<div class="empty">Error loading: ${err.message}</div>`;
+  }
+}
+
+function dayLabel(dateStr) {
+  const today = todayISO();
+  if (dateStr === today) return "TODAY";
+  if (dateStr === isoShift(today, 1)) return "TOMORROW";
+  return fmtDateHeader(dateStr);
+}
+
+function renderUpcoming(list, topSet) {
+  if (!list.length) return `<div class="empty">No upcoming matches.</div>`;
+  const groups = {}; const order = [];
+  list.forEach(f => {
+    const d = f.match_date || "TBD";
+    if (!groups[d]) { groups[d] = []; order.push(d); }
+    groups[d].push(f);
+  });
+  return order.map(d => `
+    <div class="upc-day">${d === "TBD" ? "DATE TBD" : dayLabel(d)}</div>
+    ${groups[d].map(f => upcomingRow(f, topSet)).join("")}`).join("");
+}
+
+function upcomingRow(f, topSet) {
+  const live = isLive(f), fin = isFinished(f);
+  const scored = f.home_score != null && f.away_score != null;
+  const matchup = scored
+    ? `${f.home_team} <b>${f.home_score}–${f.away_score}</b> ${f.away_team}`
+    : `${f.home_team} <span class="vs">vs</span> ${f.away_team}`;
+  const tag = (topSet.has(f.home_team) && topSet.has(f.away_team))
+    ? `<span class="upc-tag">Top 4 clash</span>` : "";
+  let right = "";
+  if (live) right = `<span class="live">● LIVE</span>`;
+  else if (fin) right = `<span class="ft">FT</span>`;
+  else if (f.kickoff_utc) right = `<span class="kot">${fmtTime(f.kickoff_utc)}</span>`;
+  return `<div class="upc-row" data-id="${f.id}" data-home="${encodeURIComponent(f.home_team)}" data-away="${encodeURIComponent(f.away_team)}">
+    <span class="upc-match">${matchup}</span>
+    ${tag}
+    <span class="upc-right">${right}</span>
+  </div>`;
+}
+
+function formDots(form) {
+  if (!form.length) return `<span class="form"></span>`;
+  return `<span class="form">${form.map(r => `<span class="fd ${r}"></span>`).join("")}</span>`;
+}
+
+function renderStandings(rows) {
+  if (!rows.length) return `<div class="empty">Standings will appear once results are in.</div>`;
+  return `
+    <div class="st-head"><span class="st-rank">#</span><span class="st-team">TEAM</span><span class="st-form">FORM</span><span class="st-num">P</span><span class="st-num">GD</span><span class="st-num">PTS</span></div>
+    ${rows.map((r, i) => {
+      const m = teamMeta(r.team);
+      return `<div class="st-row">
+        <span class="st-rank">${i + 1}</span>
+        <span class="st-team">${m.short}</span>
+        <span class="st-form">${formDots(r.form)}</span>
+        <span class="st-num">${r.p}</span>
+        <span class="st-num">${r.gd > 0 ? "+" + r.gd : r.gd}</span>
+        <span class="st-num pts">${r.pts}</span>
+      </div>`;
+    }).join("")}`;
+}
+
+// Full scrollable fixtures list (reached via "See all")
+async function showFixtures(league) {
+  content.innerHTML = `
+    <div class="fx-page">
+      <button id="back">← Home</button>
+      <div class="panel fx-panel">
+        <div class="fx-titlebar">
+          <div class="apptitle">${league.name}</div>
+          <div class="appsub">All fixtures · tap a match for lineups</div>
+        </div>
+        <div id="fixtures">Loading…</div>
+      </div>
+    </div>`;
+  document.getElementById("back").addEventListener("click", showHome);
   const fx = document.getElementById("fixtures");
   try {
-    const fixtures = await api(`fixtures?order=match_date,kickoff_utc&select=*`);
+    const fixtures = await api(`fixtures?league_id=eq.${league.apiId}&order=match_date,kickoff_utc&select=*`);
     if (!fixtures.length) {
       fx.innerHTML = `<div class="empty">No fixtures loaded yet.</div>`;
       return;
@@ -238,9 +455,25 @@ async function showHome() {
   }
 }
 
+// Full standings table (reached via "Full table")
+function showStandings(rows, league) {
+  content.innerHTML = `
+    <div class="fx-page">
+      <button id="back">← Home</button>
+      <div class="panel fx-panel">
+        <div class="fx-titlebar">
+          <div class="apptitle">${league ? league.name : "Standings"}</div>
+          <div class="appsub">Standings · computed from results</div>
+        </div>
+        <div class="standings-full">${renderStandings(rows)}</div>
+      </div>
+    </div>`;
+  document.getElementById("back").addEventListener("click", showHome);
+}
+
 async function showLineup(fixtureId, home, away) {
   content.innerHTML = `
-    <button id="back">← Fixtures</button>
+    <button id="back">← Back</button>
     <div class="pitch" id="pitch">Loading lineups…</div>
     <div class="hint">Tap a player for stats</div>`;
   document.getElementById("back").addEventListener("click", () => showHome());
@@ -322,11 +555,4 @@ async function showPlayerCard(d) {
 }
 
 // ---- boot ----
-async function initialDate() {
-  try {
-    const upcoming = await api(`fixtures?match_date=gte.${todayISO()}&order=match_date&limit=1&select=match_date`);
-    if (upcoming.length) return upcoming[0].match_date;
-  } catch (_) {}
-  return todayISO();
-}
 showHome();

@@ -27,13 +27,61 @@ body { font-family:-apple-system,system-ui,sans-serif; margin:0; padding:16px; c
   box-shadow:0 8px 30px rgba(30,64,140,0.12);
   -webkit-backdrop-filter:blur(30px) saturate(1.4); backdrop-filter:blur(30px) saturate(1.4); }
 
-/* ===== Header + day groups (single scrollable page) ===== */
+/* ===== League switcher ===== */
+.leaguebar { display:flex; gap:10px; overflow-x:auto; padding:9px 8px 13px; margin-bottom:2px; scrollbar-width:none; }
+.leaguebar::-webkit-scrollbar { display:none; }
+.lchip { flex:0 0 auto; cursor:pointer; }
+.lchip-badge { width:40px; height:40px; border-radius:50%; background:#fff; overflow:hidden;
+  display:flex; align-items:center; justify-content:center; border:1px solid rgba(20,30,60,.12);
+  box-shadow:0 2px 6px rgba(20,30,60,.18); transition:transform .15s, opacity .15s, box-shadow .15s; }
+.lchip-badge img { width:100%; height:100%; object-fit:contain; padding:5px; }
+.lchip.active .lchip-badge { outline:2.5px solid #3b82f6; outline-offset:2px; transform:scale(1.05); box-shadow:0 3px 10px rgba(59,130,246,.4); }
+.lchip.soon .lchip-badge { opacity:.5; filter:grayscale(.4); }
+.lchip.soon:hover .lchip-badge { opacity:.82; }
+
+/* ===== Section headers ===== */
+.sec-head { display:flex; justify-content:space-between; align-items:baseline; margin:6px 2px 9px; }
+.sec-head span { font-size:16px; font-weight:700; color:#15192b; }
+.sec-link { font-size:12px; font-weight:600; color:#3457c7; cursor:pointer; }
+.sec-link:hover { text-decoration:underline; }
+
+/* ===== Upcoming rows ===== */
+.upc-day { font-size:11px; font-weight:700; letter-spacing:.5px; color:#8a93a6; margin:11px 2px 6px; }
+.upc-row { display:flex; align-items:center; gap:8px; background:rgba(255,255,255,0.5);
+  border:1px solid rgba(255,255,255,0.6); border-radius:11px; padding:9px 12px; margin-bottom:7px; cursor:pointer; transition:background .15s; }
+.upc-row:hover { background:rgba(255,255,255,0.88); }
+.dot { width:9px; height:9px; border-radius:50%; background:var(--c); flex:0 0 auto; }
+.upc-match { font-size:14px; color:#15192b; font-weight:600; flex:1 1 auto; min-width:0; line-height:1.3; }
+.upc-match b { font-weight:800; }
+.upc-match .vs { color:#9aa3b2; font-weight:500; font-size:12px; }
+.upc-tag { font-size:10px; font-weight:600; color:#5b6478; background:rgba(100,116,139,.14); padding:2px 8px; border-radius:20px; white-space:nowrap; flex:0 0 auto; }
+.upc-right { margin-left:auto; flex:0 0 auto; font-size:12px; white-space:nowrap; padding-left:4px; }
+.live { color:#e11d48; font-weight:800; font-size:11px; letter-spacing:.2px; }
+.ft { color:#8a93a6; font-weight:700; font-size:11px; }
+.kot { color:#15192b; font-weight:600; font-size:12px; }
+
+/* ===== Standings table ===== */
+.st-head, .st-row { display:grid; grid-template-columns:20px 1fr auto 22px 34px 30px; align-items:center; gap:6px; }
+.st-head { font-size:10px; font-weight:700; letter-spacing:.4px; color:#9aa3b2; padding:2px 6px 6px; }
+.st-row { background:rgba(255,255,255,0.45); border:1px solid rgba(255,255,255,0.6); border-radius:9px; padding:7px 6px; margin-bottom:5px; font-size:13px; }
+.st-rank { text-align:center; color:#6b7280; font-weight:700; }
+.st-team { display:flex; align-items:center; gap:6px; font-weight:600; color:#15192b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.st-num { text-align:center; color:#15192b; font-variant-numeric:tabular-nums; }
+.st-num.pts { font-weight:800; }
+.st-form { display:flex; }
+.form { display:flex; gap:3px; }
+.fd { width:7px; height:7px; border-radius:50%; background:#cbd5e1; }
+.fd.W { background:#16a34a; } .fd.D { background:#9aa3b2; } .fd.L { background:#e11d48; }
+
+.soon-emoji { font-size:30px; margin-bottom:6px; }
+
+/* ===== Header + day groups (full fixtures list) ===== */
 .apptitle { font-size:20px; font-weight:700; letter-spacing:.3px; color:#15192b; }
 .appsub { font-size:12px; color:#5b6478; margin:2px 0 4px; }
 .date-title { font-size:13px; font-weight:700; letter-spacing:.5px; color:#3457c7; margin:16px 2px 8px; }
 .daygroup:first-of-type .date-title { margin-top:10px; }
 /* scroll-driven reveal: each day group opens up + rises as it scrolls in (MacBook-scroll feel) */
-.daygroup { transform-origin:center top; scroll-margin-top:14px; animation:reveal linear both;
+.daygroup { transform-origin:center top; scroll-margin-top:6px; animation:reveal linear both;
   animation-timeline:view(); animation-range:entry 2% cover 20%; }
 @keyframes reveal {
   from { opacity:0; transform:perspective(900px) rotateX(16deg) translateY(26px) scale(0.95); }
@@ -52,10 +100,17 @@ body { font-family:-apple-system,system-ui,sans-serif; margin:0; padding:16px; c
 .match .t1 { font-size:13px; font-weight:600; color:#15192b; }
 .match .t2 { font-size:12px; color:#6b7280; margin-top:2px; }
 .ampm { font-size:9px; font-weight:600; }
-.footer { text-align:center; font-size:13px; color:#6b7280; margin-top:8px; }
+.footer { text-align:center; font-size:13px; color:#6b7280; margin-top:12px; }
 .empty { padding:24px 12px; text-align:center; color:#5b6478; line-height:1.6; }
-#back { background:rgba(255,255,255,0.6); color:#15192b; border:1px solid rgba(255,255,255,0.7); padding:6px 12px; border-radius:8px; cursor:pointer; font-size:13px; margin-bottom:10px;
+#back { position:sticky; top:8px; z-index:5; background:rgba(255,255,255,0.82); color:#15192b; border:1px solid rgba(255,255,255,0.7); padding:6px 12px; border-radius:8px; cursor:pointer; font-size:13px; margin-bottom:10px; box-shadow:0 4px 14px rgba(30,64,140,0.10);
   -webkit-backdrop-filter:blur(16px); backdrop-filter:blur(16px); }
+
+/* ===== Fixtures page: stationary card + title, list scrolls inside ===== */
+.fx-page { display:flex; flex-direction:column; height:calc(100vh - 32px); }
+.fx-page #back { position:static; top:auto; flex:0 0 auto; align-self:flex-start; }
+.fx-panel { display:flex; flex-direction:column; flex:1 1 auto; min-height:0; overflow:hidden; }
+.fx-titlebar { flex:0 0 auto; padding-bottom:8px; }
+.fx-panel #fixtures, .fx-panel .standings-full { flex:1 1 auto; min-height:0; overflow-y:auto; padding-right:2px; }
 
 /* ===== Pitch: light glass tactics board ===== */
 .pitch { position:relative; background:rgba(255,255,255,0.4); border:1px solid rgba(255,255,255,0.65);
